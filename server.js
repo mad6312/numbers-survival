@@ -13,13 +13,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 const players = {}; // socketId -> { id, name, avatar, isReady, isHost }
 let gameState = {
     inProgress: false,
-    isEvaluating: false,    // 判定処理の二重実行防止フラグ
+    isEvaluating: false,
     initialPlayerCount: 0,
     targetScore: 0,
     requiredTraps: 0,
     numberPool: [],         // [1, 2, ...]
     consumedNumbers: [],
-    turnOrder: [],          // 行動順 [socketId, ...]
+    turnOrder: [],          // 全プレイヤー順序
+    survivorOrder: [],      // 【新規】今ラウンドのサバイバー選択順（毎ラウンドランダム決定）
     killerHistory: [],
     currentKillerId: null,
     roundPhase: 'waiting',  // 'trap_setting', 'survivor_selection', 'evaluating', 'round_end', 'game_over'
@@ -92,8 +93,7 @@ function startGame() {
     gameState.numberPool = Array.from({ length: totalNumbers }, (_, i) => i + 1);
     gameState.consumedNumbers = [];
 
-    const shuffledIds = readyPlayers.map(p => p.id).sort(() => Math.random() - 0.5);
-    gameState.turnOrder = shuffledIds;
+    gameState.turnOrder = readyPlayers.map(p => p.id);
     gameState.killerHistory = [];
 
     gameState.playerStats = {};
@@ -129,6 +129,11 @@ function startNewRound() {
     gameState.roundPhase = 'trap_setting';
     gameState.roundResults = null;
 
+    // 【公平化】生存サバイバーの選択順を毎ラウンドランダムに決定
+    const aliveSurvivors = alive.filter(id => id !== killerId);
+    gameState.survivorOrder = aliveSurvivors.sort(() => Math.random() - 0.5);
+    gameState.currentSurvivorTurnIndex = 0;
+
     broadcastGameState();
 }
 
@@ -150,6 +155,7 @@ function getPublicGameState(forSocketId) {
             life: gameState.playerStats[id] ? gameState.playerStats[id].life : 0,
             alive: gameState.playerStats[id] ? gameState.playerStats[id].alive : false
         })),
+        survivorOrder: gameState.survivorOrder,
         currentKillerId: gameState.currentKillerId,
         roundPhase: gameState.roundPhase,
         trapsSetCount: gameState.currentTraps.length,
@@ -162,11 +168,8 @@ function getPublicGameState(forSocketId) {
 
 function getCurrentSurvivorId() {
     if (gameState.roundPhase !== 'survivor_selection') return null;
-    const aliveSurvivors = gameState.turnOrder.filter(
-        id => id !== gameState.currentKillerId && gameState.playerStats[id] && gameState.playerStats[id].alive
-    );
-    if (gameState.currentSurvivorTurnIndex < aliveSurvivors.length) {
-        return aliveSurvivors[gameState.currentSurvivorTurnIndex];
+    if (gameState.currentSurvivorTurnIndex < gameState.survivorOrder.length) {
+        return gameState.survivorOrder[gameState.currentSurvivorTurnIndex];
     }
     return null;
 }
@@ -202,25 +205,28 @@ function evaluateRound() {
         }
     }
 
+    // Safe数字はプールから消費
     gameState.numberPool = gameState.numberPool.filter(n => !pickedSafeNumbers.includes(n));
     gameState.consumedNumbers.push(...pickedSafeNumbers);
 
     gameState.roundResults = {
         results,
-        trapsRevealed: [...gameState.currentTraps]
+        trapsRevealed: [...gameState.currentTraps] // 答え合わせ用に罠数字を全公開
     };
 
+    // 判定イベント送信（カウントダウン3秒）
     io.emit('game:round_evaluating', {
         countdown: 3,
         results: gameState.roundResults
     });
 
+    // タイムライン: カウントダウン(3秒) + SAFE/OUT表示(2.5秒) + 盤面確認タイム(3秒) = 約8.8秒後に次へ
     setTimeout(() => {
         let winnerDeclared = checkWinConditions();
         if (!winnerDeclared) {
             startNewRound();
         }
-    }, 7000);
+    }, 8800);
 }
 
 function checkWinConditions() {
@@ -320,19 +326,12 @@ io.on('connection', (socket) => {
         if (!gameState.numberPool.includes(number)) return;
         if (Object.values(gameState.survivorPicks).includes(number)) return;
 
-        // 1. 選択された数字を記録してインデックスを進める
         gameState.survivorPicks[socket.id] = number;
         gameState.currentSurvivorTurnIndex += 1;
 
-        const aliveSurvivors = gameState.turnOrder.filter(
-            id => id !== gameState.currentKillerId && gameState.playerStats[id] && gameState.playerStats[id].alive
-        );
-
-        // 【重要】最後のサバイバーであっても、まず即座に盤面を同期してアバターバッジを表示させる
         broadcastGameState();
 
-        // 2. 全サバイバーが選び終えた場合は、自然な間（0.8秒）を置いてからカウントダウンを開始
-        if (gameState.currentSurvivorTurnIndex >= aliveSurvivors.length) {
+        if (gameState.currentSurvivorTurnIndex >= gameState.survivorOrder.length) {
             setTimeout(() => {
                 if (gameState.inProgress && !gameState.isEvaluating) {
                     evaluateRound();

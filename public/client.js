@@ -12,6 +12,7 @@ let selectedAvatarForSetting = '🤖';
 let selectedTraps = [];
 let lastGameState = null;
 let evalIntervalTimer = null;
+let evalHideResultTimeout = null;
 let evalResetTimeout = null;
 
 // DOM 要素
@@ -64,6 +65,19 @@ const avatarPresets = document.getElementById('avatar-presets');
 function formatLife(life) {
     const current = Math.max(0, Math.min(3, life));
     return '♥'.repeat(current) + '♡'.repeat(3 - current);
+}
+
+// 枠色・バッジの完全クリーンアップ関数
+function clearAllRoundStyles() {
+    document.querySelectorAll('.result-safe').forEach(el => el.classList.remove('result-safe'));
+    document.querySelectorAll('.result-out').forEach(el => el.classList.remove('result-out'));
+    document.querySelectorAll('.floating-result-badge').forEach(el => el.remove());
+    document.querySelectorAll('.score-gain-badge').forEach(el => el.remove());
+    document.querySelectorAll('.trap-revealed').forEach(el => el.classList.remove('trap-revealed'));
+    document.querySelectorAll('.is-active-turn').forEach(el => el.classList.remove('is-active-turn'));
+    if (myStatusBox) {
+        myStatusBox.classList.remove('result-safe', 'result-out', 'is-active-turn');
+    }
 }
 
 // ------------------------------
@@ -168,6 +182,7 @@ socket.on('lobby:update', ({ players, inProgress }) => {
     });
 
     if (!inProgress) {
+        clearAllRoundStyles();
         lobbyView.classList.add('active');
         gameView.classList.remove('active');
     }
@@ -185,6 +200,11 @@ socket.on('game:update', (state) => {
     const isKiller = (state.currentKillerId === myId);
     const myPlayer = state.turnOrder.find(p => p.id === myId);
     const isMySurvivorTurn = (state.roundPhase === 'survivor_selection' && state.currentSurvivorId === myId);
+
+    // 新ラウンド開始時（罠設置フェーズ）は枠色・バッジをクリア
+    if (state.roundPhase === 'trap_setting') {
+        clearAllRoundStyles();
+    }
 
     // 1. 自陣情報の描画
     if (myPlayer) {
@@ -230,7 +250,7 @@ socket.on('game:update', (state) => {
           ${isOppActiveTurn ? '<span class="role-badge turn-active">選択中</span>' : ''}
         </div>
         <div class="opp-stats">
-          <span class="heart-text">${formatLife(p.life)}</span> | <span class="score-text">${p.score}pt</span>
+          <span class="heart-text">${formatLife(p.life)}</span>&nbsp;|&nbsp;<span class="score-text">${p.score}pt</span>
         </div>
       </div>
     `;
@@ -251,11 +271,17 @@ socket.on('game:update', (state) => {
         }
     } else if (state.roundPhase === 'survivor_selection') {
         killerActionBar.style.display = 'none';
-        if (state.currentSurvivorId === myId) {
+
+        const aliveSurvivorCount = state.survivorOrder ? state.survivorOrder.length : 0;
+        const pickedCount = Object.keys(state.survivorPicks).length;
+
+        if (pickedCount >= aliveSurvivorCount && aliveSurvivorCount > 0) {
+            roundPhaseText.textContent = '全員の選択が完了しました！運命の判定に入ります...';
+        } else if (state.currentSurvivorId === myId) {
             roundPhaseText.textContent = '【あなたの番】数字を1つクリックして回避してください！';
         } else {
             const activeSurvivor = state.turnOrder.find(p => p.id === state.currentSurvivorId);
-            const name = activeSurvivor ? activeSurvivor.name : '相手';
+            const name = activeSurvivor ? activeSurvivor.name : 'サバイバー';
             roundPhaseText.textContent = `${name} が数字を選択中...`;
         }
     } else if (state.roundPhase === 'evaluating') {
@@ -281,6 +307,7 @@ function renderNumberPool(state) {
         const isConsumed = state.consumedNumbers.includes(num);
         const card = document.createElement('div');
         card.className = 'num-card';
+        card.id = `num-card-${num}`;
         card.textContent = num;
 
         if (isConsumed) {
@@ -347,7 +374,7 @@ submitTrapsBtn.addEventListener('click', () => {
 });
 
 // ------------------------------
-// ラウンド判定カウントダウン＆演出
+// ラウンド判定カウントダウン＆二段階答え合わせ演出
 // ------------------------------
 function triggerCountAnimation(number) {
     evalCountdown.textContent = number;
@@ -358,11 +385,13 @@ function triggerCountAnimation(number) {
 
 socket.on('game:round_evaluating', ({ countdown, results }) => {
     if (evalIntervalTimer) clearInterval(evalIntervalTimer);
+    if (evalHideResultTimeout) clearTimeout(evalHideResultTimeout);
     if (evalResetTimeout) clearTimeout(evalResetTimeout);
 
-    // カウントダウン開始時に手番強調および既存の判定バッジをリセット
+    roundPhaseText.textContent = '運命の判定中...';
+
+    // 手番強調の解除
     document.querySelectorAll('.is-active-turn').forEach(el => el.classList.remove('is-active-turn'));
-    document.querySelectorAll('.floating-result-badge').forEach(el => el.remove());
     if (myRoleBadge && !myStatusBox.classList.contains('is-killer')) {
         myRoleBadge.textContent = 'サバイバー';
         myRoleBadge.className = 'role-badge';
@@ -393,13 +422,13 @@ function showResultDetails(roundResults) {
     const myId = socket.id;
     const myRes = roundResults.results[myId];
 
-    // 枠線の色変更 ＆ 各サバイバー枠上部に「SAFE」「OUT」バッジを表示
+    // 1. 各サバイバー枠上部に「SAFE」「OUT」バッジを表示 ＆ 枠線変化 ＆ SAFE時のポイント追加表示
     for (const [pId, res] of Object.entries(roundResults.results)) {
         const isSafe = (res.result === 'Safe');
         const badgeText = isSafe ? 'SAFE' : 'OUT';
         const badgeClass = isSafe ? 'badge-safe' : 'badge-out';
 
-        // 1. 対戦相手カードへの適用
+        // 対戦相手カード
         const card = document.getElementById(`player-card-${pId}`);
         if (card) {
             card.classList.add(isSafe ? 'result-safe' : 'result-out');
@@ -407,19 +436,51 @@ function showResultDetails(roundResults) {
             badge.className = `floating-result-badge ${badgeClass}`;
             badge.textContent = badgeText;
             card.appendChild(badge);
+
+            // 【SAFE時】獲得ポイント（+〇〇pts）を表示
+            if (isSafe && res.pointsEarned > 0) {
+                const statsEl = card.querySelector('.opp-stats');
+                if (statsEl) {
+                    const gainBadge = document.createElement('span');
+                    gainBadge.className = 'score-gain-badge';
+                    gainBadge.textContent = `+${res.pointsEarned}pts`;
+                    statsEl.appendChild(gainBadge);
+                }
+            }
         }
 
-        // 2. 自陣枠への適用
+        // 自陣枠
         if (pId === myId) {
             myStatusBox.classList.add(isSafe ? 'result-safe' : 'result-out');
             const badge = document.createElement('div');
             badge.className = `floating-result-badge ${badgeClass}`;
             badge.textContent = badgeText;
             myStatusBox.appendChild(badge);
+
+            // 【SAFE時】獲得ポイント（+〇〇pts）を表示
+            if (isSafe && res.pointsEarned > 0) {
+                const scoreRow = myStatusBox.querySelector('.my-score-row');
+                if (scoreRow) {
+                    const gainBadge = document.createElement('span');
+                    gainBadge.className = 'score-gain-badge';
+                    gainBadge.textContent = `+${res.pointsEarned}pts`;
+                    scoreRow.appendChild(gainBadge);
+                }
+            }
         }
     }
 
-    // 自身がサバイバーなら中央結果カードを表示
+    // 2. 罠だった全数字カードを盤面上で強調表示（答え合わせ）
+    if (roundResults.trapsRevealed && Array.isArray(roundResults.trapsRevealed)) {
+        roundResults.trapsRevealed.forEach(trapNum => {
+            const card = document.getElementById(`num-card-${trapNum}`);
+            if (card) {
+                card.classList.add('trap-revealed');
+            }
+        });
+    }
+
+    // 3. 自身がサバイバーなら中央に結果カードを表示
     if (myRes) {
         evalResultCard.classList.remove('hidden');
         if (myRes.result === 'Safe') {
@@ -433,14 +494,18 @@ function showResultDetails(roundResults) {
         }
     }
 
-    // 3.5秒後に演出を消去し、枠色および上部バッジをリセット
-    evalResetTimeout = setTimeout(() => {
+    // 【二段階タイムライン】
+    // ステップ1: 2.5秒後に中央ポップアップを隠し、盤面中央の数字を見渡せるようにする
+    evalHideResultTimeout = setTimeout(() => {
         evalOverlay.classList.add('hidden');
         evalResultCard.classList.add('hidden');
-        document.querySelectorAll('.result-safe').forEach(el => el.classList.remove('result-safe'));
-        document.querySelectorAll('.result-out').forEach(el => el.classList.remove('result-out'));
-        document.querySelectorAll('.floating-result-badge').forEach(el => el.remove());
-    }, 3500);
+        roundPhaseText.textContent = '【答え合わせ】罠の配置と結果を確認中...';
+    }, 2500);
+
+    // ステップ2: さらに3.0秒（合計5.5秒後）見渡したのち、枠色や獲得バッジ、罠ハイライトをリセット
+    evalResetTimeout = setTimeout(() => {
+        clearAllRoundStyles();
+    }, 5500);
 }
 
 // ------------------------------
@@ -448,9 +513,10 @@ function showResultDetails(roundResults) {
 // ------------------------------
 socket.on('game:over', ({ reason, rankings }) => {
     if (evalIntervalTimer) clearInterval(evalIntervalTimer);
+    if (evalHideResultTimeout) clearTimeout(evalHideResultTimeout);
     if (evalResetTimeout) clearTimeout(evalResetTimeout);
     evalOverlay.classList.add('hidden');
-    document.querySelectorAll('.floating-result-badge').forEach(el => el.remove());
+    clearAllRoundStyles();
 
     let reasonText = '';
     switch (reason) {
@@ -490,6 +556,7 @@ rematchBtn.addEventListener('click', () => {
 
 socket.on('game:rematch_confirmed', () => {
     gameOverModal.classList.add('hidden');
+    clearAllRoundStyles();
     gameView.classList.remove('active');
     lobbyView.classList.add('active');
 });
@@ -500,6 +567,7 @@ leaveBtn.addEventListener('click', () => {
 
 socket.on('game:leave_confirmed', () => {
     gameOverModal.classList.add('hidden');
+    clearAllRoundStyles();
     gameView.classList.remove('active');
     lobbyView.classList.add('active');
 });

@@ -10,6 +10,7 @@
     --accent-purple: #9d4edd;
     --safe-color: #00b4d8;
     --out-color: #e63946;
+    --gain-color: #2ec4b6;
     --border-radius: 12px;
 }
 
@@ -282,7 +283,7 @@ body {
     }
 }
 
-/* 選択中のサバイバー強調枠（シアン/青パルス） */
+/* 手番サバイバー強調枠（シアン/青パルス） */
 .opponent-card.is-active-turn,
 .my-status-panel.is-active-turn {
     border-color: var(--accent-blue) !important;
@@ -312,7 +313,7 @@ body {
     box-shadow: 0 0 20px rgba(230, 57, 70, 0.9) !important;
 }
 
-/* 【新規】プレイヤー枠上部にポップアップする「SAFE / OUT」バッジ */
+/* プレイヤー枠上部の「SAFE / OUT」バッジ */
 .floating-result-badge {
     position: absolute;
     top: -14px;
@@ -353,6 +354,34 @@ body {
     }
 }
 
+/* 【新規】獲得ポイント追加表示（+〇〇pts）用バッジ */
+.score-gain-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 0.8rem;
+    font-weight: 900;
+    color: var(--gain-color);
+    text-shadow: 0 0 8px rgba(46, 196, 182, 0.8);
+    animation: gainFloat 0.4s ease-out forwards;
+}
+
+@keyframes gainFloat {
+    0% {
+        transform: translateY(6px) scale(0.6);
+        opacity: 0;
+    }
+
+    60% {
+        transform: translateY(-2px) scale(1.15);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateY(0) scale(1.0);
+        opacity: 1;
+    }
+}
+
 .opp-avatar {
     font-size: 1.8rem;
 }
@@ -376,6 +405,8 @@ body {
 .opp-stats {
     font-size: 0.75rem;
     color: var(--text-muted);
+    display: flex;
+    align-items: center;
 }
 
 .heart-text {
@@ -476,7 +507,7 @@ body {
     font-size: 1.25rem;
     font-weight: bold;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
     flex-shrink: 0;
 }
 
@@ -507,6 +538,40 @@ body {
 .num-card.disabled {
     cursor: not-allowed;
     opacity: 0.8;
+}
+
+.num-card.trap-revealed {
+    background: #4a0e2e !important;
+    border-color: #ff0055 !important;
+    color: #ffccd5 !important;
+    box-shadow: 0 0 14px rgba(255, 0, 85, 0.8) !important;
+    animation: trapPulse 1s infinite alternate;
+    z-index: 2;
+}
+
+.num-card.trap-revealed::before {
+    content: "TRAP";
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #ff0055;
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 900;
+    padding: 1px 4px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+}
+
+@keyframes trapPulse {
+    0% {
+        box-shadow: 0 0 8px rgba(255, 0, 85, 0.5);
+    }
+
+    100% {
+        box-shadow: 0 0 18px rgba(255, 0, 85, 1);
+    }
 }
 
 .picked-avatar-badge {
@@ -587,6 +652,11 @@ body {
     gap: 8px;
 }
 
+.my-score-row {
+    display: flex;
+    align-items: center;
+}
+
 .role-badge {
     font-size: 0.75rem;
     background: #0077b6;
@@ -652,7 +722,7 @@ body {
 
 .eval-result-card {
     text-align: center;
-    background: rgba(26, 34, 50, 0.92);
+    background: rgba(26, 34, 50, 0.95);
     border: 2px solid #4a5d80;
     padding: 24px 48px;
     border-radius: 16px;
