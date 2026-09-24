@@ -1,0 +1,6 @@
+backup/
+node_modules/
+jpg_files/
+# APIキーや個人の設定ファイルを除外
+config.yaml
+.env

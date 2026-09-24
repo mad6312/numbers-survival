@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ナンバーズ・サバイバル (Numbers Survival)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- ヘッダーエリア -->
+        <header class="top-bar">
+            <div class="logo">🎲 ナンバーズ・サバイバル</div>
+            <button id="open-settings-btn" class="icon-btn" title="プレイヤー設定">⚙️ 設定</button>
+        </header>
+
+        <!-- 1. ロビー画面 -->
+        <section id="lobby-view" class="view-panel active">
+            <div class="lobby-card">
+                <h2>対戦ロビー</h2>
+                <div class="lobby-stats">
+                    現在の参加人数: <span id="ready-count-badge" class="count-badge">0 / 0</span>
+                </div>
+
+                <div class="lobby-players" id="lobby-players-list">
+                    <!-- 参加者リストが動的に挿入されます -->
+                </div>
+
+                <div class="lobby-controls">
+                    <button id="toggle-ready-btn" class="primary-btn">参加する</button>
+                    <button id="start-game-btn" class="host-btn" style="display: none;">ゲーム開始</button>
+                </div>
+                <p id="host-hint" class="hint-text"></p>
+            </div>
+        </section>
+
+        <!-- 2. メインゲーム画面 -->
+        <section id="game-view" class="view-panel">
+            <!-- 上部・左右：対戦相手エリア -->
+            <div class="opponents-wrapper" id="opponents-container">
+                <!-- 対戦相手のカードが動的に挿入されます -->
+            </div>
+
+            <!-- 中央：ゲーム進行ガイド ＆ 数字プール盤面 -->
+            <div class="game-center">
+                <div class="game-status-header">
+                    <div id="round-phase-text" class="status-phase">ラウンド進行中</div>
+                    <div id="game-goals" class="status-goals">目標: 0pt | 罠: 0個</div>
+                </div>
+
+                <!-- キラー用のアクションバー -->
+                <div id="killer-action-bar" class="action-bar" style="display: none;">
+                    <span id="killer-msg">数字をクリックして罠を <strong id="traps-needed">0</strong> 個指定してください</span>
+                    <button id="submit-traps-btn" class="accent-btn" disabled>罠を設置する (0/0)</button>
+                </div>
+
+                <!-- 数字プール盤面 -->
+                <div class="number-pool-container" id="number-pool">
+                    <!-- 数字カードが動的に配置されます -->
+                </div>
+            </div>
+
+            <!-- 手前中央：自分自身のプレイヤーステータス -->
+            <div class="my-status-panel" id="my-status-box">
+                <div class="my-avatar" id="my-avatar-display">🤖</div>
+                <div class="my-info">
+                    <div class="my-name-row">
+                        <span id="my-name-display" class="name-text">Player</span>
+                        <span id="my-role-badge" class="role-badge">サバイバー</span>
+                    </div>
+                    <div class="my-life-row">
+                        ライフ: <span id="my-life-display" class="heart-text">♥♥♥</span>
+                    </div>
+                    <div class="my-score-row">
+                        獲得ポイント: <span id="my-score-display" class="score-text">0</span> pts
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 判定カウントダウン ＆ 結果演出オーバーレイ -->
+        <div id="evaluation-overlay" class="overlay hidden">
+            <div class="overlay-content">
+                <div id="eval-countdown" class="eval-countdown">3</div>
+                <div id="eval-result-card" class="eval-result-card hidden">
+                    <h1 id="eval-title" class="eval-title">Safe</h1>
+                    <p id="eval-subtext" class="eval-subtext">+0 pts 獲得</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 最終結果モーダル -->
+        <div id="game-over-modal" class="modal-backdrop hidden">
+            <div class="modal-dialog">
+                <h2>ゲーム終了</h2>
+                <h3 id="game-over-reason" class="reason-text">勝者が決定しました</h3>
+
+                <div class="rankings-table-container">
+                    <table class="rankings-table">
+                        <thead>
+                            <tr>
+                                <th>順位</th>
+                                <th>プレイヤー</th>
+                                <th>ライフ</th>
+                                <th>ポイント</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rankings-tbody">
+                            <!-- 順位一覧 -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="modal-actions">
+                    <button id="rematch-btn" class="primary-btn">再戦</button>
+                    <button id="leave-btn" class="secondary-btn">退出する</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. 設定モーダル -->
+        <div id="settings-modal" class="modal-backdrop hidden">
+            <div class="modal-dialog">
+                <h3>プレイヤー設定</h3>
+                <div class="form-group">
+                    <label for="setting-player-name">プレイヤー名:</label>
+                    <input type="text" id="setting-player-name" maxlength="10" placeholder="名前を入力">
+                </div>
+                <div class="form-group">
+                    <label>アバター選択:</label>
+                    <div class="avatar-preset-picker" id="avatar-presets">
+                        <!-- プリセットが動的に展開されます -->
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button id="save-settings-btn" class="primary-btn">保存</button>
+                    <button id="close-settings-btn" class="secondary-btn">閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+
+</html>
