@@ -19,10 +19,10 @@ let gameState = {
     requiredTraps: 0,
     numberPool: [],         // [1, 2, ...]
     consumedNumbers: [],
-    turnOrder: [],          // 全プレイヤー順序
-    survivorOrder: [],      // 【新規】今ラウンドのサバイバー選択順（毎ラウンドランダム決定）
-    killerHistory: [],
+    baseOrder: [],          // 【重要】ゲーム開始時に固定された基本順序 [socketId, ...]
+    lastKillerId: null,     // 前ラウンドのキラーID（ローテーション追跡用）
     currentKillerId: null,
+    survivorOrder: [],      // 現ラウンドのサバイバー行動順（時計回り）
     roundPhase: 'waiting',  // 'trap_setting', 'survivor_selection', 'evaluating', 'round_end', 'game_over'
     currentSurvivorTurnIndex: 0,
     currentTraps: [],
@@ -59,23 +59,42 @@ function syncLobbyState() {
     });
 }
 
-function getAlivePlayers() {
-    return gameState.turnOrder.filter(id => gameState.playerStats[id] && gameState.playerStats[id].alive);
+// 基本順序に基づいた生存プレイヤーリストを取得（脱落者は除外）
+function getAlivePlayersInBaseOrder() {
+    return gameState.baseOrder.filter(id => gameState.playerStats[id] && gameState.playerStats[id].alive);
 }
 
-function pickNextKiller() {
-    let alive = getAlivePlayers();
-    if (alive.length === 0) return null;
+// キラー交代およびサバイバー時計回り順序決定ロジック
+function rotateRoles() {
+    const alive = getAlivePlayersInBaseOrder();
+    if (alive.length === 0) return;
 
-    gameState.killerHistory = gameState.killerHistory.filter(id => alive.includes(id));
-    if (gameState.killerHistory.length >= alive.length) {
-        gameState.killerHistory = [];
+    let killerIndex = 0;
+
+    // 初回ラウンドでない場合は、前回キラーの次の生存者をキラーに選出
+    if (gameState.lastKillerId) {
+        const prevIndex = alive.indexOf(gameState.lastKillerId);
+        if (prevIndex !== -1) {
+            killerIndex = (prevIndex + 1) % alive.length;
+        } else {
+            // 前回キラーが脱落していた場合はそのまま現在のインデックス位置をキラーに
+            killerIndex = 0;
+        }
     }
 
-    const candidates = alive.filter(id => !gameState.killerHistory.includes(id));
-    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-    gameState.killerHistory.push(chosen);
-    return chosen;
+    const chosenKiller = alive[killerIndex];
+    gameState.currentKillerId = chosenKiller;
+    gameState.lastKillerId = chosenKiller;
+
+    // サバイバーの行動順: キラーの直後から時計回りに生存者を配置
+    const survivors = [];
+    for (let i = 1; i < alive.length; i++) {
+        const sIdx = (killerIndex + i) % alive.length;
+        survivors.push(alive[sIdx]);
+    }
+
+    gameState.survivorOrder = survivors;
+    gameState.currentSurvivorTurnIndex = 0;
 }
 
 function startGame() {
@@ -93,8 +112,9 @@ function startGame() {
     gameState.numberPool = Array.from({ length: totalNumbers }, (_, i) => i + 1);
     gameState.consumedNumbers = [];
 
-    gameState.turnOrder = readyPlayers.map(p => p.id);
-    gameState.killerHistory = [];
+    // 【仕様変更】ゲーム開始時に全参加者の行動順をランダム決定し固定
+    gameState.baseOrder = readyPlayers.map(p => p.id).sort(() => Math.random() - 0.5);
+    gameState.lastKillerId = null;
 
     gameState.playerStats = {};
     readyPlayers.forEach(p => {
@@ -110,7 +130,7 @@ function startGame() {
 
 function startNewRound() {
     gameState.isEvaluating = false;
-    const alive = getAlivePlayers();
+    const alive = getAlivePlayersInBaseOrder();
 
     if (alive.length <= 1) {
         endGame('survivor_last_one');
@@ -122,17 +142,13 @@ function startNewRound() {
         return;
     }
 
-    const killerId = pickNextKiller();
-    gameState.currentKillerId = killerId;
+    // キラーの時計回り選出 ＆ サバイバー行動順の時計回り決定
+    rotateRoles();
+
     gameState.currentTraps = [];
     gameState.survivorPicks = {};
     gameState.roundPhase = 'trap_setting';
     gameState.roundResults = null;
-
-    // 【公平化】生存サバイバーの選択順を毎ラウンドランダムに決定
-    const aliveSurvivors = alive.filter(id => id !== killerId);
-    gameState.survivorOrder = aliveSurvivors.sort(() => Math.random() - 0.5);
-    gameState.currentSurvivorTurnIndex = 0;
 
     broadcastGameState();
 }
@@ -147,7 +163,7 @@ function getPublicGameState(forSocketId) {
         requiredTraps: gameState.requiredTraps,
         numberPool: gameState.numberPool,
         consumedNumbers: gameState.consumedNumbers,
-        turnOrder: gameState.turnOrder.map(id => ({
+        turnOrder: gameState.baseOrder.map(id => ({
             id,
             name: players[id] ? players[id].name : 'Unknown',
             avatar: players[id] ? players[id].avatar : '❓',
@@ -205,22 +221,19 @@ function evaluateRound() {
         }
     }
 
-    // Safe数字はプールから消費
     gameState.numberPool = gameState.numberPool.filter(n => !pickedSafeNumbers.includes(n));
     gameState.consumedNumbers.push(...pickedSafeNumbers);
 
     gameState.roundResults = {
         results,
-        trapsRevealed: [...gameState.currentTraps] // 答え合わせ用に罠数字を全公開
+        trapsRevealed: [...gameState.currentTraps]
     };
 
-    // 判定イベント送信（カウントダウン3秒）
     io.emit('game:round_evaluating', {
         countdown: 3,
         results: gameState.roundResults
     });
 
-    // タイムライン: カウントダウン(3秒) + SAFE/OUT表示(2.5秒) + 盤面確認タイム(3秒) = 約8.8秒後に次へ
     setTimeout(() => {
         let winnerDeclared = checkWinConditions();
         if (!winnerDeclared) {
@@ -230,7 +243,7 @@ function evaluateRound() {
 }
 
 function checkWinConditions() {
-    const alive = getAlivePlayers();
+    const alive = getAlivePlayersInBaseOrder();
 
     if (alive.filter(id => gameState.playerStats[id].score >= gameState.targetScore).length > 0) {
         endGame('target_reached');
@@ -252,7 +265,7 @@ function endGame(reason) {
     gameState.isEvaluating = false;
     gameState.roundPhase = 'game_over';
 
-    const rankings = gameState.turnOrder.map(id => ({
+    const rankings = gameState.baseOrder.map(id => ({
         id,
         name: players[id] ? players[id].name : 'Unknown',
         avatar: players[id] ? players[id].avatar : '❓',
