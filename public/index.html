@@ -24,6 +24,30 @@
                     現在の参加人数: <span id="ready-count-badge" class="count-badge">0 / 0</span>
                 </div>
 
+                <!-- 全員に同期されるルール表示欄 -->
+                <div class="room-rule-badge">
+                    目標ポイント補正: <strong id="lobby-rule-correction-status">なし</strong>
+                </div>
+
+                <!-- ホスト専用設定パネル -->
+                <div id="host-settings-panel" class="host-settings-card" style="display: none;">
+                    <div class="host-settings-title">👑 ホスト専用ゲーム設定</div>
+                    <div class="setting-row">
+                        <span class="setting-label">目標ポイント補正:</span>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="score-correction-radio" value="off" checked>
+                                <span>なし（通常）</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="score-correction-radio" value="on">
+                                <span>あり（可変）</span>
+                            </label>
+                        </div>
+                    </div>
+                    <p class="setting-note">※参加人数が2人の場合は設定に関わらず標準ルール（40pt）が適用されます。</p>
+                </div>
+
                 <div class="lobby-players" id="lobby-players-list">
                     <!-- 参加者リストが動的に挿入されます -->
                 </div>

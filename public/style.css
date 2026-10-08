@@ -97,7 +97,7 @@ body {
     background: var(--panel-bg);
     border: 1px solid #2d3b55;
     border-radius: var(--border-radius);
-    padding: 32px;
+    padding: 28px 32px;
     width: 100%;
     max-width: 650px;
     text-align: center;
@@ -105,8 +105,8 @@ body {
 }
 
 .lobby-stats {
-    margin: 16px 0;
-    font-size: 1.1rem;
+    margin: 12px 0 8px 0;
+    font-size: 1.05rem;
     color: var(--text-muted);
 }
 
@@ -118,12 +118,82 @@ body {
     font-weight: bold;
 }
 
+/* ルール表示バッジ */
+.room-rule-badge {
+    display: inline-block;
+    background: rgba(0, 210, 255, 0.1);
+    border: 1px solid rgba(0, 210, 255, 0.3);
+    padding: 4px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    color: #c9e4f5;
+    margin-bottom: 14px;
+}
+
+.room-rule-badge strong {
+    color: var(--accent-blue);
+}
+
+/* 【新規】ホスト専用設定パネル */
+.host-settings-card {
+    background: rgba(255, 183, 3, 0.06);
+    border: 1px dashed rgba(255, 183, 3, 0.4);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 12px 0 16px 0;
+    text-align: left;
+}
+
+.host-settings-title {
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: var(--accent-gold);
+    margin-bottom: 8px;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.setting-label {
+    font-size: 0.85rem;
+    font-weight: bold;
+}
+
+.radio-group {
+    display: flex;
+    gap: 12px;
+}
+
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.radio-label input[type="radio"] {
+    accent-color: var(--accent-gold);
+    cursor: pointer;
+}
+
+.setting-note {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
 .lobby-players {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     gap: 14px;
-    margin: 24px 0;
-    min-height: 120px;
+    margin: 18px 0;
+    min-height: 110px;
 }
 
 .lobby-player-chip {
@@ -185,7 +255,7 @@ body {
     display: flex;
     gap: 16px;
     justify-content: center;
-    margin-top: 20px;
+    margin-top: 18px;
 }
 
 .primary-btn {
@@ -354,7 +424,7 @@ body {
     }
 }
 
-/* 【新規】獲得ポイント追加表示（+〇〇pts）用バッジ */
+/* 獲得ポイント追加表示（+〇〇pts）用バッジ */
 .score-gain-badge {
     display: inline-block;
     margin-left: 6px;

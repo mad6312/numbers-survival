@@ -24,6 +24,11 @@ const toggleReadyBtn = document.getElementById('toggle-ready-btn');
 const startGameBtn = document.getElementById('start-game-btn');
 const hostHint = document.getElementById('host-hint');
 
+// 【新規】ルール同期 ＆ ホスト設定UI要素
+const lobbyRuleCorrectionStatus = document.getElementById('lobby-rule-correction-status');
+const hostSettingsPanel = document.getElementById('host-settings-panel');
+const scoreCorrectionRadios = document.querySelectorAll('input[name="score-correction-radio"]');
+
 // ゲームUI
 const opponentsContainer = document.getElementById('opponents-container');
 const roundPhaseText = document.getElementById('round-phase-text');
@@ -126,7 +131,7 @@ function initSettings() {
 initSettings();
 
 // ------------------------------
-// ロビー操作
+// ロビー操作 ＆ ホスト設定
 // ------------------------------
 toggleReadyBtn.addEventListener('click', () => {
     socket.emit('lobby:toggle_ready');
@@ -136,8 +141,23 @@ startGameBtn.addEventListener('click', () => {
     socket.emit('game:start');
 });
 
-socket.on('lobby:update', ({ players, inProgress }) => {
+// ホストによる目標ポイント補正切り替え
+scoreCorrectionRadios.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        const isEnabled = (e.target.value === 'on');
+        socket.emit('host:set_score_correction', isEnabled);
+    });
+});
+
+socket.on('lobby:update', ({ players, inProgress, scoreCorrection }) => {
     const me = players.find(p => p.id === socket.id);
+
+    // ルール表示欄の同期更新
+    if (lobbyRuleCorrectionStatus) {
+        lobbyRuleCorrectionStatus.textContent = scoreCorrection ? 'あり（可変）' : 'なし（通常）';
+        lobbyRuleCorrectionStatus.style.color = scoreCorrection ? 'var(--accent-gold)' : 'var(--accent-blue)';
+    }
+
     if (me) {
         if (!myProfile.name) myProfile.name = me.name;
         myProfile.avatar = me.avatar;
@@ -150,7 +170,14 @@ socket.on('lobby:update', ({ players, inProgress }) => {
             toggleReadyBtn.classList.remove('ready-active');
         }
 
+        // ホスト専用UIの制御
         if (me.isHost) {
+            hostSettingsPanel.style.display = 'block';
+            // ラジオボタンの状態を同期
+            scoreCorrectionRadios.forEach(r => {
+                r.checked = (r.value === (scoreCorrection ? 'on' : 'off'));
+            });
+
             startGameBtn.style.display = 'inline-block';
             const readyPlayers = players.filter(p => p.isReady).length;
             if (readyPlayers >= 2 && readyPlayers <= 10) {
@@ -161,6 +188,7 @@ socket.on('lobby:update', ({ players, inProgress }) => {
                 hostHint.textContent = '開始には2〜10名のエントリーが必要です';
             }
         } else {
+            hostSettingsPanel.style.display = 'none';
             startGameBtn.style.display = 'none';
             hostHint.textContent = 'ホストがゲームを開始するのをお待ちください';
         }
@@ -201,7 +229,6 @@ socket.on('game:update', (state) => {
     const myPlayer = state.turnOrder.find(p => p.id === myId);
     const isMySurvivorTurn = (state.roundPhase === 'survivor_selection' && state.currentSurvivorId === myId);
 
-    // 新ラウンド開始時（罠設置フェーズ）は枠色・バッジをクリア
     if (state.roundPhase === 'trap_setting') {
         clearAllRoundStyles();
     }
@@ -257,7 +284,8 @@ socket.on('game:update', (state) => {
         opponentsContainer.appendChild(card);
     });
 
-    gameGoals.textContent = `目標スコア: ${state.targetScore}pt | 罠: ${state.requiredTraps}個`;
+    const correctionTag = state.scoreCorrectionApplied ? ' (補正あり)' : '';
+    gameGoals.textContent = `目標スコア: ${state.targetScore}pt${correctionTag} | 罠: ${state.requiredTraps}個`;
 
     trapsNeededEl.textContent = state.requiredTraps;
     if (state.roundPhase === 'trap_setting') {
@@ -390,7 +418,6 @@ socket.on('game:round_evaluating', ({ countdown, results }) => {
 
     roundPhaseText.textContent = '運命の判定中...';
 
-    // 手番強調の解除
     document.querySelectorAll('.is-active-turn').forEach(el => el.classList.remove('is-active-turn'));
     if (myRoleBadge && !myStatusBox.classList.contains('is-killer')) {
         myRoleBadge.textContent = 'サバイバー';
@@ -437,7 +464,6 @@ function showResultDetails(roundResults) {
             badge.textContent = badgeText;
             card.appendChild(badge);
 
-            // 【SAFE時】獲得ポイント（+〇〇pts）を表示
             if (isSafe && res.pointsEarned > 0) {
                 const statsEl = card.querySelector('.opp-stats');
                 if (statsEl) {
@@ -457,7 +483,6 @@ function showResultDetails(roundResults) {
             badge.textContent = badgeText;
             myStatusBox.appendChild(badge);
 
-            // 【SAFE時】獲得ポイント（+〇〇pts）を表示
             if (isSafe && res.pointsEarned > 0) {
                 const scoreRow = myStatusBox.querySelector('.my-score-row');
                 if (scoreRow) {
@@ -495,14 +520,12 @@ function showResultDetails(roundResults) {
     }
 
     // 【二段階タイムライン】
-    // ステップ1: 2.5秒後に中央ポップアップを隠し、盤面中央の数字を見渡せるようにする
     evalHideResultTimeout = setTimeout(() => {
         evalOverlay.classList.add('hidden');
         evalResultCard.classList.add('hidden');
         roundPhaseText.textContent = '【答え合わせ】罠の配置と結果を確認中...';
     }, 2500);
 
-    // ステップ2: さらに3.0秒（合計5.5秒後）見渡したのち、枠色や獲得バッジ、罠ハイライトをリセット
     evalResetTimeout = setTimeout(() => {
         clearAllRoundStyles();
     }, 5500);

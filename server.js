@@ -11,23 +11,28 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // サーバー全体の管理ステート
 const players = {}; // socketId -> { id, name, avatar, isReady, isHost }
+let roomSettings = {
+    scoreCorrection: false // 目標ポイント補正: false = なし (デフォルト), true = あり
+};
+
 let gameState = {
     inProgress: false,
     isEvaluating: false,
     initialPlayerCount: 0,
     targetScore: 0,
+    scoreCorrectionApplied: false,
     requiredTraps: 0,
-    numberPool: [],         // [1, 2, ...]
+    numberPool: [],
     consumedNumbers: [],
-    baseOrder: [],          // 【重要】ゲーム開始時に固定された基本順序 [socketId, ...]
-    lastKillerId: null,     // 前ラウンドのキラーID（ローテーション追跡用）
+    baseOrder: [],
+    lastKillerId: null,
     currentKillerId: null,
-    survivorOrder: [],      // 現ラウンドのサバイバー行動順（時計回り）
-    roundPhase: 'waiting',  // 'trap_setting', 'survivor_selection', 'evaluating', 'round_end', 'game_over'
+    survivorOrder: [],
+    roundPhase: 'waiting',
     currentSurvivorTurnIndex: 0,
     currentTraps: [],
-    survivorPicks: {},      // socketId -> number
-    playerStats: {},        // socketId -> { score, life, alive }
+    survivorPicks: {},
+    playerStats: {},
     roundResults: null
 };
 
@@ -55,29 +60,26 @@ function updateHost() {
 function syncLobbyState() {
     io.emit('lobby:update', {
         players: getConnectedList(),
-        inProgress: gameState.inProgress
+        inProgress: gameState.inProgress,
+        scoreCorrection: roomSettings.scoreCorrection
     });
 }
 
-// 基本順序に基づいた生存プレイヤーリストを取得（脱落者は除外）
 function getAlivePlayersInBaseOrder() {
-    return gameState.baseOrder.filter(id => gameState.playerStats[id] && gameState.playerStats[id].alive);
+    return gameState.baseOrder.filter(id => players[id] && gameState.playerStats[id] && gameState.playerStats[id].alive);
 }
 
-// キラー交代およびサバイバー時計回り順序決定ロジック
 function rotateRoles() {
     const alive = getAlivePlayersInBaseOrder();
     if (alive.length === 0) return;
 
     let killerIndex = 0;
 
-    // 初回ラウンドでない場合は、前回キラーの次の生存者をキラーに選出
     if (gameState.lastKillerId) {
         const prevIndex = alive.indexOf(gameState.lastKillerId);
         if (prevIndex !== -1) {
             killerIndex = (prevIndex + 1) % alive.length;
         } else {
-            // 前回キラーが脱落していた場合はそのまま現在のインデックス位置をキラーに
             killerIndex = 0;
         }
     }
@@ -86,7 +88,6 @@ function rotateRoles() {
     gameState.currentKillerId = chosenKiller;
     gameState.lastKillerId = chosenKiller;
 
-    // サバイバーの行動順: キラーの直後から時計回りに生存者を配置
     const survivors = [];
     for (let i = 1; i < alive.length; i++) {
         const sIdx = (killerIndex + i) % alive.length;
@@ -97,6 +98,14 @@ function rotateRoles() {
     gameState.currentSurvivorTurnIndex = 0;
 }
 
+function calculateTargetScore(playerCount, scoreCorrectionEnabled) {
+    const N = playerCount;
+    if (N <= 2 || !scoreCorrectionEnabled) {
+        return (N - 1) * 40;
+    }
+    return (N - 1) * (40 + 3 * (N - 1));
+}
+
 function startGame() {
     const readyPlayers = Object.values(players).filter(p => p.isReady);
     if (readyPlayers.length < 2 || readyPlayers.length > 10) return;
@@ -105,14 +114,16 @@ function startGame() {
     gameState.inProgress = true;
     gameState.isEvaluating = false;
     gameState.initialPlayerCount = N;
-    gameState.targetScore = (N - 1) * 40;
+
+    const isCorrectionActive = (roomSettings.scoreCorrection && N > 2);
+    gameState.scoreCorrectionApplied = isCorrectionActive;
+    gameState.targetScore = calculateTargetScore(N, roomSettings.scoreCorrection);
     gameState.requiredTraps = N - 1;
 
     const totalNumbers = (N - 1) * 12;
     gameState.numberPool = Array.from({ length: totalNumbers }, (_, i) => i + 1);
     gameState.consumedNumbers = [];
 
-    // 【仕様変更】ゲーム開始時に全参加者の行動順をランダム決定し固定
     gameState.baseOrder = readyPlayers.map(p => p.id).sort(() => Math.random() - 0.5);
     gameState.lastKillerId = null;
 
@@ -142,7 +153,6 @@ function startNewRound() {
         return;
     }
 
-    // キラーの時計回り選出 ＆ サバイバー行動順の時計回り決定
     rotateRoles();
 
     gameState.currentTraps = [];
@@ -160,18 +170,21 @@ function getPublicGameState(forSocketId) {
         inProgress: gameState.inProgress,
         initialPlayerCount: gameState.initialPlayerCount,
         targetScore: gameState.targetScore,
+        scoreCorrectionApplied: gameState.scoreCorrectionApplied,
         requiredTraps: gameState.requiredTraps,
         numberPool: gameState.numberPool,
         consumedNumbers: gameState.consumedNumbers,
-        turnOrder: gameState.baseOrder.map(id => ({
-            id,
-            name: players[id] ? players[id].name : 'Unknown',
-            avatar: players[id] ? players[id].avatar : '❓',
-            score: gameState.playerStats[id] ? gameState.playerStats[id].score : 0,
-            life: gameState.playerStats[id] ? gameState.playerStats[id].life : 0,
-            alive: gameState.playerStats[id] ? gameState.playerStats[id].alive : false
-        })),
-        survivorOrder: gameState.survivorOrder,
+        turnOrder: gameState.baseOrder
+            .filter(id => players[id]) // Unknown表示の防止（接続中のみ）
+            .map(id => ({
+                id,
+                name: players[id].name,
+                avatar: players[id].avatar,
+                score: gameState.playerStats[id] ? gameState.playerStats[id].score : 0,
+                life: gameState.playerStats[id] ? gameState.playerStats[id].life : 0,
+                alive: gameState.playerStats[id] ? gameState.playerStats[id].alive : false
+            })),
+        survivorOrder: gameState.survivorOrder.filter(id => players[id]),
         currentKillerId: gameState.currentKillerId,
         roundPhase: gameState.roundPhase,
         trapsSetCount: gameState.currentTraps.length,
@@ -184,8 +197,9 @@ function getPublicGameState(forSocketId) {
 
 function getCurrentSurvivorId() {
     if (gameState.roundPhase !== 'survivor_selection') return null;
-    if (gameState.currentSurvivorTurnIndex < gameState.survivorOrder.length) {
-        return gameState.survivorOrder[gameState.currentSurvivorTurnIndex];
+    const validSurvivors = gameState.survivorOrder.filter(id => players[id] && gameState.playerStats[id] && gameState.playerStats[id].alive);
+    if (gameState.currentSurvivorTurnIndex < validSurvivors.length) {
+        return validSurvivors[gameState.currentSurvivorTurnIndex];
     }
     return null;
 }
@@ -206,6 +220,7 @@ function evaluateRound() {
     const pickedSafeNumbers = [];
 
     for (const [sId, pickedNum] of Object.entries(gameState.survivorPicks)) {
+        if (!players[sId]) continue; // 切断者はスキップ
         const isOut = traps.includes(pickedNum);
         if (isOut) {
             gameState.playerStats[sId].score = 0;
@@ -265,19 +280,83 @@ function endGame(reason) {
     gameState.isEvaluating = false;
     gameState.roundPhase = 'game_over';
 
-    const rankings = gameState.baseOrder.map(id => ({
-        id,
-        name: players[id] ? players[id].name : 'Unknown',
-        avatar: players[id] ? players[id].avatar : '❓',
-        score: gameState.playerStats[id] ? gameState.playerStats[id].score : 0,
-        life: gameState.playerStats[id] ? gameState.playerStats[id].life : 0,
-        alive: gameState.playerStats[id] ? gameState.playerStats[id].alive : false
-    })).sort((a, b) => {
-        if (a.alive !== b.alive) return a.alive ? -1 : 1;
-        return b.score - a.score;
-    });
+    const rankings = gameState.baseOrder
+        .filter(id => players[id])
+        .map(id => ({
+            id,
+            name: players[id].name,
+            avatar: players[id].avatar,
+            score: gameState.playerStats[id] ? gameState.playerStats[id].score : 0,
+            life: gameState.playerStats[id] ? gameState.playerStats[id].life : 0,
+            alive: gameState.playerStats[id] ? gameState.playerStats[id].alive : false
+        })).sort((a, b) => {
+            if (a.alive !== b.alive) return a.alive ? -1 : 1;
+            return b.score - a.score;
+        });
 
     io.emit('game:over', { reason, rankings });
+    broadcastGameState();
+}
+
+// ------------------------------
+// 【重要】切断時の自動即時除外＆進行補正ロジック
+// ------------------------------
+function handlePlayerDisconnect(socketId) {
+    const wasHost = players[socketId] ? players[socketId].isHost : false;
+    delete players[socketId];
+
+    if (wasHost) updateHost();
+    syncLobbyState();
+
+    if (!gameState.inProgress) return;
+
+    // ゲームステートから除外
+    if (gameState.playerStats[socketId]) {
+        gameState.playerStats[socketId].alive = false;
+    }
+    gameState.baseOrder = gameState.baseOrder.filter(id => id !== socketId);
+    delete gameState.survivorPicks[socketId];
+
+    // 生存者数を再計算し、勝利判定（残り1人以下ならゲーム終了）
+    const alive = getAlivePlayersInBaseOrder();
+    if (alive.length <= 1) {
+        endGame('survivor_last_one');
+        return;
+    }
+
+    // 1. キラーが切断した場合の救済
+    if (gameState.currentKillerId === socketId) {
+        if (gameState.roundPhase === 'trap_setting') {
+            // 罠設置中なら直ちに次のキラーへ交代してラウンド再始動
+            startNewRound();
+            return;
+        }
+    }
+
+    // 2. サバイバーが切断した場合の救済
+    if (gameState.survivorOrder.includes(socketId)) {
+        gameState.survivorOrder = gameState.survivorOrder.filter(id => id !== socketId);
+
+        if (gameState.roundPhase === 'survivor_selection') {
+            // 残りサバイバーの選択完了判定
+            const aliveSurvivors = gameState.survivorOrder.filter(id => players[id] && gameState.playerStats[id].alive);
+            const pickedCount = Object.keys(gameState.survivorPicks).length;
+
+            if (pickedCount >= aliveSurvivors.length && aliveSurvivors.length > 0) {
+                // 全員選び終えていれば判定フェーズへ進行
+                setTimeout(() => {
+                    if (gameState.inProgress && !gameState.isEvaluating) {
+                        evaluateRound();
+                    }
+                }, 800);
+            } else {
+                // 次のサバイバーへ手番を進める
+                broadcastGameState();
+            }
+            return;
+        }
+    }
+
     broadcastGameState();
 }
 
@@ -305,6 +384,12 @@ io.on('connection', (socket) => {
     socket.on('lobby:toggle_ready', () => {
         if (!players[socket.id] || gameState.inProgress) return;
         players[socket.id].isReady = !players[socket.id].isReady;
+        syncLobbyState();
+    });
+
+    socket.on('host:set_score_correction', (enabled) => {
+        if (!players[socket.id] || !players[socket.id].isHost || gameState.inProgress) return;
+        roomSettings.scoreCorrection = Boolean(enabled);
         syncLobbyState();
     });
 
@@ -344,7 +429,8 @@ io.on('connection', (socket) => {
 
         broadcastGameState();
 
-        if (gameState.currentSurvivorTurnIndex >= gameState.survivorOrder.length) {
+        const validSurvivors = gameState.survivorOrder.filter(id => players[id] && gameState.playerStats[id] && gameState.playerStats[id].alive);
+        if (gameState.currentSurvivorTurnIndex >= validSurvivors.length) {
             setTimeout(() => {
                 if (gameState.inProgress && !gameState.isEvaluating) {
                     evaluateRound();
@@ -367,20 +453,9 @@ io.on('connection', (socket) => {
         socket.emit('game:leave_confirmed');
     });
 
+    // 切断処理（即時除外＆自律補正）
     socket.on('disconnect', () => {
-        const wasHost = players[socket.id] ? players[socket.id].isHost : false;
-        delete players[socket.id];
-
-        if (wasHost) updateHost();
-        syncLobbyState();
-
-        if (gameState.inProgress) {
-            if (gameState.playerStats[socket.id]) {
-                gameState.playerStats[socket.id].alive = false;
-            }
-            checkWinConditions();
-            broadcastGameState();
-        }
+        handlePlayerDisconnect(socket.id);
     });
 });
 
